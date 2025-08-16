@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FPACK/FUNPACK Precision Loss</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #1a202c;
+            color: #e2e8f0;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        .card {
+            background-color: #2d3748;
+            border-radius: 0.5rem;
+            padding: 1.5rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .header-title {
+            font-size: 2.25rem;
+            font-weight: 700;
+            color: #4fd1c5;
+        }
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            font-weight: 600;
+            transition: background-color 0.3s;
+        }
+        .btn-primary {
+            background-color: #4fd1c5;
+            color: #2d3748;
+        }
+        .btn-primary:hover {
+            background-color: #38b2ac;
+        }
+        .btn-secondary {
+            background-color: #a0aec0;
+            color: #2d3748;
+        }
+        .btn-secondary:hover {
+            background-color: #718096;
+        }
+        .input-group {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        .result-box {
+            background-color: #4a5568;
+            padding: 1rem;
+            border-radius: 0.5rem;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100">
+    <div class="container py-8">
+        <div class="card space-y-6">
+            <h1 class="header-title text-center">FPACK/FUNPACK Precision Loss Calculator</h1>
+            <p class="text-center text-gray-400">
+                This tool simulates the precision loss when converting a 32-bit floating-point number to a 
+                16-bit format (FPACK) and back to a 32-bit format (FUNPACK), as on the SHARC processor.
+            </p>
+
+            <div class="flex justify-center gap-4">
+                <button id="generate-single" class="btn btn-primary">Generate Single Number</button>
+                <button id="generate-batch" class="btn btn-secondary">Generate Batch (1000)</button>
+            </div>
+
+            <div id="single-result" class="hidden">
+                <h2 class="text-xl font-bold mb-4">Single Result</h2>
+                <div class="result-box space-y-2">
+                    <p><strong>Original Value:</strong> <span id="original-single"></span></p>
+                    <p><strong>Packed/Unpacked Value:</strong> <span id="final-single"></span></p>
+                    <p><strong>Precision Loss:</strong> <span id="loss-single"></span></p>
+                    <p><strong>Binary Representation (16-bit):</strong> <span id="binary-single" class="font-mono text-sm"></span></p>
+                </div>
+            </div>
+
+            <div id="batch-results" class="hidden">
+                <h2 class="text-xl font-bold mb-4">Batch Results (1000 numbers)</h2>
+                <div class="result-box space-y-2">
+                    <p><strong>Average Precision Loss:</strong> <span id="average-loss-batch"></span></p>
+                    <div class="max-h-64 overflow-y-auto mt-4">
+                        <table class="w-full text-left">
+                            <thead>
+                                <tr class="border-b border-gray-500">
+                                    <th class="py-2 px-4">Original</th>
+                                    <th class="py-2 px-4">Final</th>
+                                    <th class="py-2 px-4">Loss</th>
+                                    <th class="py-2 px-4">16-bit Binary</th>
+                                </tr>
+                            </thead>
+                            <tbody id="batch-table-body">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Custom FPACK/FUNPACK functions based on SHARC's 16-bit format (simplified for demonstration)
+        function float32ToFp16(f32) {
+            const buffer = new ArrayBuffer(4);
+            const view = new DataView(buffer);
+            view.setFloat32(0, f32);
+
+            const sign = (view.getUint32(0) & 0x80000000) >> 31;
+            const exponent = (view.getUint32(0) & 0x7f800000) >> 23;
+            const mantissa = view.getUint32(0) & 0x007fffff;
+
+            // Simplified conversion to a 16-bit format (1 sign bit, 4 exp, 11 mantissa)
+            // This is a rough approximation and not a perfect bit-for-bit simulation of SHARC's custom FPACK
+            let fp16_exp = 0;
+            let fp16_mant = 0;
+
+            if (exponent > 120) {
+                fp16_exp = (exponent - 120);
+                if (fp16_exp > 15) fp16_exp = 15; // Clamp exponent to max 4 bits
+            }
+
+            // Get upper 11 bits of mantissa, rounding
+            const mantissa_shifted = mantissa >> (23 - 11);
+            fp16_mant = mantissa_shifted;
+
+            const fp16_value = (sign << 15) | (fp16_exp << 11) | fp16_mant;
+            return fp16_value;
+        }
+
+        function fp16ToFloat32(fp16) {
+            const sign = (fp16 & 0x8000) >> 15;
+            const exponent = (fp16 & 0x7c00) >> 11;
+            const mantissa = fp16 & 0x07ff;
+
+            let f32_exp = 0;
+            let f32_mant = mantissa << (23 - 11);
+
+            if (exponent > 0) {
+                f32_exp = exponent + 120;
+            } else {
+                // Denormalized or zero
+                f32_exp = 0;
+            }
+
+            const f32_value = (sign << 31) | (f32_exp << 23) | f32_mant;
+
+            const buffer = new ArrayBuffer(4);
+            const view = new DataView(buffer);
+            view.setUint32(0, f32_value);
+            return view.getFloat32(0);
+        }
+
+        function calculateLoss(original) {
+            const fp16_value = float32ToFp16(original);
+            const fp32_final = fp16ToFloat32(fp16_value);
+            const loss = Math.abs(original - fp32_final);
+            return {
+                final: fp32_final,
+                loss: loss,
+                binary: fp16_value.toString(2).padStart(16, '0')
+            };
+        }
+
+        document.getElementById('generate-single').addEventListener('click', () => {
+            const randomValue = Math.random() * 100 - 50; // Generate numbers between -50 and 50
+            const result = calculateLoss(randomValue);
+
+            document.getElementById('original-single').textContent = randomValue;
+            document.getElementById('final-single').textContent = result.final;
+            document.getElementById('loss-single').textContent = result.loss;
+            document.getElementById('binary-single').textContent = result.binary;
+
+            document.getElementById('single-result').classList.remove('hidden');
+            document.getElementById('batch-results').classList.add('hidden');
+        });
+
+        document.getElementById('generate-batch').addEventListener('click', () => {
+            let totalLoss = 0;
+            const tableBody = document.getElementById('batch-table-body');
+            tableBody.innerHTML = '';
+
+            for (let i = 0; i < 1000; i++) {
+                const randomValue = Math.random() * 100 - 50;
+                const result = calculateLoss(randomValue);
+                totalLoss += result.loss;
+
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td class="py-1 px-4 text-sm">${randomValue.toPrecision(7)}</td>
+                    <td class="py-1 px-4 text-sm">${result.final.toPrecision(7)}</td>
+                    <td class="py-1 px-4 text-sm">${result.loss.toPrecision(7)}</td>
+                    <td class="py-1 px-4 text-sm font-mono">${result.binary}</td>
+                `;
+                tableBody.appendChild(row);
+            }
+
+            document.getElementById('average-loss-batch').textContent = (totalLoss / 1000).toPrecision(7);
+
+            document.getElementById('single-result').classList.add('hidden');
+            document.getElementById('batch-results').classList.remove('hidden');
+        });
+    </script>
+</body>
+</html>
